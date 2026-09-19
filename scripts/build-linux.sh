@@ -12,16 +12,24 @@ if [[ ! -d "$SOURCE/.git" || ! -f "$MANIFEST" ]]; then
   exit 1
 fi
 
-if [[ ! -s "$HOME/.nvm/nvm.sh" ]]; then
-  echo "nvm nao encontrado em $HOME/.nvm/nvm.sh" >&2
-  exit 1
+REQUIRED_NODE="24.13.1"
+CURRENT_NODE="$(node -p 'process.versions.node' 2>/dev/null || true)"
+
+if [[ "$CURRENT_NODE" != "$REQUIRED_NODE" ]]; then
+  if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
+    source "$HOME/.nvm/nvm.sh"
+    nvm install "$REQUIRED_NODE"
+    nvm use "$REQUIRED_NODE"
+  else
+    echo "Node $REQUIRED_NODE necessario; encontrado: ${CURRENT_NODE:-nenhum}" >&2
+    exit 1
+  fi
 fi
 
-# Todo o monorepo desta nightly espera Node 24.13.x.
-# O Node 26.8.2 sera usado somente internamente pelo vp no build do SEA.
-source "$HOME/.nvm/nvm.sh"
-nvm install 24.13.1
-nvm use 24.13.1
+if ! command -v vp >/dev/null 2>&1; then
+  echo "Vite+ (vp) nao encontrado no PATH." >&2
+  exit 1
+fi
 
 VERSION="$(
   python3 -c \
