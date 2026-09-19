@@ -232,10 +232,9 @@ install -Dm644 \
 echo
 echo '=== LAUNCHER ==='
 
-cat > "$BIN_DIR/t3code-nightly" <<LAUNCHER
+cat > "$BIN_DIR/t3code-nightly" <<'LAUNCHER'
 #!/bin/sh
-export T3CODE_DISABLE_AUTO_UPDATE=1
-exec "$CURRENT" "\$@"
+exec "$HOME/dev/t3code-patched/scripts/launch-cachyos.sh" "$@"
 LAUNCHER
 
 chmod +x "$BIN_DIR/t3code-nightly"
