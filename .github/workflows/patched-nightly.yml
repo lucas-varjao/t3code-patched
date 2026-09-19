@@ -1,0 +1,290 @@
+name: Patched T3 nightly
+
+on:
+  schedule:
+    # A cada 30 minutos, deslocado do inicio da hora.
+    - cron: "17,47 * * * *"
+
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: "Nightly upstream especifica (opcional)"
+        required: false
+        type: string
+      force:
+        description: "Reconstruir mesmo se a release ja estiver completa"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: patched-t3-nightly
+  cancel-in-progress: false
+
+env:
+  PATCH_REVISION: "1"
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout automation repo
+        uses: actions/checkout@v4
+
+      - name: Detect upstream nightly
+        id: detect
+        shell: bash
+        env:
+          MANUAL_UPSTREAM_TAG: ${{ github.event.inputs.upstream_tag }}
+          FORCE_BUILD: ${{ github.event.inputs.force }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${MANUAL_UPSTREAM_TAG:-}" ]]; then
+            UPSTREAM_TAG="$MANUAL_UPSTREAM_TAG"
+          else
+            UPSTREAM_TAG="$(./scripts/latest-nightly.sh)"
+          fi
+
+          if [[ ! "$UPSTREAM_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+$ ]]; then
+            echo "Tag nightly invalida: $UPSTREAM_TAG" >&2
+            exit 1
+          fi
+
+          VERSION="${UPSTREAM_TAG#v}"
+          PATCH_TAG="${UPSTREAM_TAG}-patch.${PATCH_REVISION}"
+
+          APPIMAGE="T3-Code-${VERSION}-x86_64.AppImage"
+          CLI_ARCHIVE="t3-${VERSION}-linux-x64.tar.gz"
+
+          SHOULD_BUILD=true
+
+          if [[ "${FORCE_BUILD:-false}" != "true" ]]; then
+            if gh release view "$PATCH_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json assets \
+              --jq '.assets[].name' \
+              > /tmp/release-assets.txt 2>/dev/null
+            then
+              if grep -Fxq "$APPIMAGE" /tmp/release-assets.txt \
+                && grep -Fxq "$CLI_ARCHIVE" /tmp/release-assets.txt \
+                && grep -Fxq "manifest.json" /tmp/release-assets.txt \
+                && grep -Fxq "SHA256SUMS" /tmp/release-assets.txt
+              then
+                SHOULD_BUILD=false
+              fi
+            fi
+          fi
+
+          {
+            echo "upstream_tag=$UPSTREAM_TAG"
+            echo "version=$VERSION"
+            echo "patch_tag=$PATCH_TAG"
+            echo "appimage=$APPIMAGE"
+            echo "cli_archive=$CLI_ARCHIVE"
+            echo "should_build=$SHOULD_BUILD"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Upstream:     $UPSTREAM_TAG"
+          echo "Patched tag:  $PATCH_TAG"
+          echo "Should build: $SHOULD_BUILD"
+
+          if [[ "$SHOULD_BUILD" == "false" ]]; then
+            {
+              echo "### T3 patched nightly"
+              echo
+              echo "Release \`$PATCH_TAG\` ja esta completa."
+              echo "Nenhum build necessario."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Setup Node 24.13.1
+        if: steps.detect.outputs.should_build == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24.13.1"
+
+      - name: Prepare upstream and apply patch
+        if: steps.detect.outputs.should_build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/prepare-upstream.sh \
+            "${{ steps.detect.outputs.upstream_tag }}"
+
+      - name: Setup Vite+
+        if: steps.detect.outputs.should_build == 'true'
+        uses: voidzero-dev/setup-vp@v1.21.0
+        with:
+          working-directory: .work/t3code
+          node-manager: false
+          cache: true
+          run-install: false
+
+      - name: Setup Rust
+        if: steps.detect.outputs.should_build == 'true'
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Install Linux build dependencies
+        if: steps.detect.outputs.should_build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libsecret-1-dev \
+            pkg-config \
+            imagemagick
+
+          node --version
+          vp --version
+          rustc --version
+          cargo --version
+
+          if command -v magick >/dev/null 2>&1; then
+            magick -version
+          else
+            convert -version
+          fi
+
+      - name: Build patched artifacts
+        if: steps.detect.outputs.should_build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/build-linux.sh
+
+      - name: Verify artifacts
+        if: steps.detect.outputs.should_build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ steps.detect.outputs.version }}"
+          APPIMAGE="${{ steps.detect.outputs.appimage }}"
+          CLI_ARCHIVE="${{ steps.detect.outputs.cli_archive }}"
+
+          test -f "artifacts/$APPIMAGE"
+          test -f "artifacts/$CLI_ARCHIVE"
+          test -f artifacts/manifest.json
+          test -f artifacts/SHA256SUMS
+
+          (
+            cd artifacts
+            sha256sum -c SHA256SUMS
+          )
+
+          MANIFEST_TAG="$(
+            python3 -c \
+              'import json; print(json.load(open("artifacts/manifest.json"))["upstreamTag"])'
+          )"
+
+          MANIFEST_VERSION="$(
+            python3 -c \
+              'import json; print(json.load(open("artifacts/manifest.json"))["upstreamVersion"])'
+          )"
+
+          MANIFEST_REVISION="$(
+            python3 -c \
+              'import json; print(json.load(open("artifacts/manifest.json"))["patchRevision"])'
+          )"
+
+          [[ "$MANIFEST_TAG" == "${{ steps.detect.outputs.upstream_tag }}" ]]
+          [[ "$MANIFEST_VERSION" == "$VERSION" ]]
+          [[ "$MANIFEST_REVISION" == "$PATCH_REVISION" ]]
+
+          echo
+          echo "Artifacts verified:"
+          ls -lh artifacts/
+
+      - name: Prepare release notes
+        if: steps.detect.outputs.should_build == 'true'
+        id: release_metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          UPSTREAM_COMMIT="$(
+            python3 -c \
+              'import json; print(json.load(open("artifacts/manifest.json"))["upstreamCommit"])'
+          )"
+
+          echo "upstream_commit=$UPSTREAM_COMMIT" >> "$GITHUB_OUTPUT"
+
+          cat > /tmp/release-notes.md <<EOF2
+          Automated patched build of T3 Code Nightly.
+
+          Upstream version: \`${{ steps.detect.outputs.version }}\`
+          Upstream tag: \`${{ steps.detect.outputs.upstream_tag }}\`
+          Upstream commit: \`$UPSTREAM_COMMIT\`
+          Patch revision: \`${PATCH_REVISION}\`
+
+          Local patch:
+          - Cursor ACP AskQuestion fallback through the T3 Code MCP user-input bridge.
+
+          The embedded T3 version remains identical to the official upstream
+          version so desktop/server version synchronization continues to use
+          the official version number.
+
+          Checksums are included in \`SHA256SUMS\`.
+          EOF2
+
+      - name: Publish patched release
+        if: steps.detect.outputs.should_build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PATCH_TAG="${{ steps.detect.outputs.patch_tag }}"
+          VERSION="${{ steps.detect.outputs.version }}"
+          APPIMAGE="${{ steps.detect.outputs.appimage }}"
+          CLI_ARCHIVE="${{ steps.detect.outputs.cli_archive }}"
+
+          if gh release view "$PATCH_TAG" \
+            --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
+          then
+            echo "Release existe mas estava incompleta; substituindo assets."
+
+            gh release upload "$PATCH_TAG" \
+              "artifacts/$APPIMAGE" \
+              "artifacts/$CLI_ARCHIVE" \
+              artifacts/manifest.json \
+              artifacts/SHA256SUMS \
+              --clobber \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$PATCH_TAG" \
+              "artifacts/$APPIMAGE" \
+              "artifacts/$CLI_ARCHIVE" \
+              artifacts/manifest.json \
+              artifacts/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "T3 Code $VERSION patched rev ${PATCH_REVISION}" \
+              --notes-file /tmp/release-notes.md \
+              --prerelease
+          fi
+
+          {
+            echo "### Published"
+            echo
+            echo "- Upstream: \`${{ steps.detect.outputs.upstream_tag }}\`"
+            echo "- Patch: \`rev ${PATCH_REVISION}\`"
+            echo "- Release: \`$PATCH_TAG\`"
+            echo "- AppImage: \`$APPIMAGE\`"
+            echo "- CLI: \`$CLI_ARCHIVE\`"
+          } >> "$GITHUB_STEP_SUMMARY"
