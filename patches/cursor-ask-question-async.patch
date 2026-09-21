@@ -1,5 +1,4 @@
 diff --git a/apps/server/src/mcp/McpUserInputBridge.ts b/apps/server/src/mcp/McpUserInputBridge.ts
-index 089cdac94..c742d14d4 100644
 --- a/apps/server/src/mcp/McpUserInputBridge.ts
 +++ b/apps/server/src/mcp/McpUserInputBridge.ts
 @@ -1,9 +1,25 @@
@@ -32,27 +31,75 @@ index 089cdac94..c742d14d4 100644
  const handlers = new Map<ThreadId, McpUserInputHandler>();
  
 diff --git a/apps/server/src/mcp/toolkits/userInput/handlers.ts b/apps/server/src/mcp/toolkits/userInput/handlers.ts
-index c2c2beefe..3c7869437 100644
 --- a/apps/server/src/mcp/toolkits/userInput/handlers.ts
 +++ b/apps/server/src/mcp/toolkits/userInput/handlers.ts
-@@ -5,6 +5,10 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
+@@ -5,37 +5,57 @@
  import * as McpUserInputBridge from "../../McpUserInputBridge.ts";
  import { UserInputBridgeUnavailableError, UserInputToolkit } from "./tools.ts";
  
+-const make = Effect.gen(function* () {
+-  return UserInputToolkit.of({
+-    ask_question: (input) =>
+-      Effect.gen(function* () {
+-        const invocation = yield* McpInvocationContext.McpInvocationContext;
+-        const handler = McpUserInputBridge.read(invocation.threadId);
+-
+-        if (!handler) {
+-          return yield* new UserInputBridgeUnavailableError({
+-            threadId: invocation.threadId,
+-          });
+-        }
+-
+-        const questions: ReadonlyArray<UserInputQuestion> = input.questions.map(
+-          (question, index) => ({
+-            id: question.id ?? `question-${index + 1}`,
+-            header: question.header ?? input.title ?? "Question",
+-            question: question.question,
+-            options: question.options.map((option) => ({
+-              label: option.label,
+-              description: option.description ?? option.label,
+-              ...(option.value !== undefined ? { value: option.value } : {}),
+-            })),
+-            allowCustomAnswer: question.allowCustomAnswer ?? true,
+-            multiSelect: question.multiSelect ?? false,
+-          }),
+-        );
+-
+-        const answers = yield* handler(questions);
+-
+-        return { answers };
 +const DEFAULT_WAIT_MS = 45_000;
 +const MIN_WAIT_MS = 1_000;
 +const MAX_WAIT_MS = 45_000;
 +
- const make = Effect.gen(function* () {
-   return UserInputToolkit.of({
-     ask_question: (input) =>
-@@ -35,9 +39,25 @@ const make = Effect.gen(function* () {
-           }),
-         );
- 
--        const answers = yield* handler(questions);
--
--        return { answers };
++const make = Effect.gen(function* () {
++  return UserInputToolkit.of({
++    ask_question: (input) =>
++      Effect.gen(function* () {
++        const invocation = yield* McpInvocationContext.McpInvocationContext;
++        const handler = McpUserInputBridge.read(invocation.threadId);
++
++        if (!handler) {
++          return yield* new UserInputBridgeUnavailableError({
++            threadId: invocation.threadId,
++          });
++        }
++
++        const questions: ReadonlyArray<UserInputQuestion> = input.questions.map(
++          (question, index) => ({
++            id: question.id ?? `question-${index + 1}`,
++            header: question.header ?? input.title ?? "Question",
++            question: question.question,
++            options: question.options.map((option) => ({
++              label: option.label,
++              description: option.description ?? option.label,
++              ...(option.value !== undefined ? { value: option.value } : {}),
++            })),
++            allowCustomAnswer: question.allowCustomAnswer ?? true,
++            multiSelect: question.multiSelect ?? false,
++          }),
++        );
++
 +        return yield* handler.ask(questions);
 +      }),
 +    wait_for_answer: (input) =>
@@ -76,13 +123,32 @@ index c2c2beefe..3c7869437 100644
    });
  });
 diff --git a/apps/server/src/mcp/toolkits/userInput/tools.ts b/apps/server/src/mcp/toolkits/userInput/tools.ts
-index 6abc1a93f..fe33f1e67 100644
 --- a/apps/server/src/mcp/toolkits/userInput/tools.ts
 +++ b/apps/server/src/mcp/toolkits/userInput/tools.ts
-@@ -34,10 +34,33 @@ export class UserInputBridgeUnavailableError extends Schema.TaggedError<UserInput
+@@ -30,23 +30,63 @@
    }
  }
  
+-const AskQuestionTool = Tool.make("ask_question", {
+-  description:
+-    "Ask the user one or more questions through T3 Code's native interactive question UI and wait for their answers. Use this instead of writing clarification or multiple-choice questions as ordinary chat text when the native Cursor AskQuestion tool is unavailable in ACP.",
+-  parameters: Schema.Struct({
+-    title: Schema.optional(TrimmedNonEmptyString),
+-    questions: Schema.Array(AskQuestion),
+-  }),
+-  success: Schema.Struct({
+-    answers: ProviderUserInputAnswers,
+-  }),
+-  failure: UserInputBridgeUnavailableError,
+-  dependencies: [McpInvocationContext.McpInvocationContext],
+-})
+-  .annotate(Tool.Title, "Ask user")
+-  .annotate(Tool.Readonly, true)
+-  .annotate(Tool.Destructive, false)
+-  .annotate(Tool.Idempotent, false)
+-  .annotate(Tool.OpenWorld, false);
+-
+-export const UserInputToolkit = Toolkit.make(AskQuestionTool);
 +const AskQuestionResult = Schema.Struct({
 +  requestId: TrimmedNonEmptyString,
 +});
@@ -103,26 +169,23 @@ index 6abc1a93f..fe33f1e67 100644
 +  }),
 +]);
 +
- const AskQuestionTool = Tool.make("ask_question", {
-   description:
--    "Ask the user one or more questions through T3 Code's native interactive question UI and wait for their answers. Use this instead of writing clarification or multiple-choice questions as ordinary chat text when the native Cursor AskQuestion tool is unavailable in ACP.",
++const AskQuestionTool = Tool.make("ask_question", {
++  description:
 +    "Open one or more questions in T3 Code's native interactive question UI. This call returns immediately with a requestId; it does not wait for the human answer. After calling it once, call wait_for_answer with that requestId until status is answered. Do not create the same question again while it is pending.",
-   parameters: Schema.Struct({
-     title: Schema.optional(TrimmedNonEmptyString),
-     questions: Schema.Array(AskQuestion),
-   }),
--  success: Schema.Struct({
--    answers: ProviderUserInputAnswers,
--  }),
++  parameters: Schema.Struct({
++    title: Schema.optional(TrimmedNonEmptyString),
++    questions: Schema.Array(AskQuestion),
++  }),
 +  success: AskQuestionResult,
-   failure: UserInputBridgeUnavailableError,
-   dependencies: [McpInvocationContext.McpInvocationContext],
- })
-@@ -48,5 +71,25 @@ const AskQuestionTool = Tool.make("ask_question", {
-   .annotate(Tool.Idempotent, false)
-   .annotate(Tool.OpenWorld, false);
- 
--export const UserInputToolkit = Toolkit.make(AskQuestionTool);
++  failure: UserInputBridgeUnavailableError,
++  dependencies: [McpInvocationContext.McpInvocationContext],
++})
++  .annotate(Tool.Title, "Ask user")
++  .annotate(Tool.Readonly, true)
++  .annotate(Tool.Destructive, false)
++  .annotate(Tool.Idempotent, false)
++  .annotate(Tool.OpenWorld, false);
++
 +const WaitForAnswerTool = Tool.make("wait_for_answer", {
 +  description:
 +    "Wait for the answer to a question previously opened by ask_question. The wait is capped below the Cursor MCP request timeout. If status is pending, call wait_for_answer again with the same requestId. If status is answered, continue using answers. If status is missing, stop waiting because that request is no longer pending.",
@@ -146,11 +209,172 @@ index 6abc1a93f..fe33f1e67 100644
 +  .annotate(Tool.OpenWorld, false);
 +
 +export const UserInputToolkit = Toolkit.make(AskQuestionTool, WaitForAnswerTool);
+diff --git a/apps/server/src/provider/Layers/CursorAdapter.test.ts b/apps/server/src/provider/Layers/CursorAdapter.test.ts
+--- a/apps/server/src/provider/Layers/CursorAdapter.test.ts
++++ b/apps/server/src/provider/Layers/CursorAdapter.test.ts
+@@ -303,77 +303,87 @@
+     }),
+   );
+ 
+-  it.effect("bridges MCP ask_question through T3 native user input", () =>
+-    Effect.gen(function* () {
+-      const adapter = yield* CursorAdapter;
+-      const settings = yield* ServerSettingsService;
+-      const threadId = ThreadId.make("cursor-mcp-user-input-bridge");
+-
+-      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+-
+-      yield* adapter.startSession({
+-        threadId,
+-        provider: ProviderDriverKind.make("cursor"),
+-        cwd: process.cwd(),
+-        runtimeMode: "full-access",
+-        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+-      });
+-
+-      const requestedFiber = yield* adapter.streamEvents.pipe(
+-        Stream.filter(
+-          (event) => event.threadId === threadId && event.type === "user-input.requested",
+-        ),
+-        Stream.take(1),
+-        Stream.runCollect,
+-        Effect.forkChild,
+-      );
+-
+-      // Give the stream consumer a scheduler turn before publishing the request.
+-      yield* Effect.yieldNow;
+-
+-      const handler = McpUserInputBridge.read(threadId);
+-      assert.isDefined(handler);
+-      if (!handler) {
+-        return;
+-      }
+-
+-      const answerFiber = yield* handler([
+-        {
+-          id: "color",
+-          header: "Color",
+-          question: "Which color do you prefer?",
+-          options: [
+-            { label: "Blue", description: "Blue", value: "blue" },
+-            { label: "Green", description: "Green", value: "green" },
+-            { label: "Red", description: "Red", value: "red" },
+-          ],
+-          allowCustomAnswer: false,
+-          multiSelect: false,
+-        },
+-      ]).pipe(Effect.forkChild);
+-
+-      const requestedEvents = Array.from(yield* Fiber.join(requestedFiber));
+-      const requested = requestedEvents[0];
+-
+-      assert.isDefined(requested);
+-      if (!requested || requested.type !== "user-input.requested") {
+-        return;
+-      }
+-
+-      assert.equal(requested.payload.questions[0]?.question, "Which color do you prefer?");
+-      assert.deepStrictEqual(
+-        requested.payload.questions[0]?.options.map((option) => option.value),
+-        ["blue", "green", "red"],
+-      );
+-
+-      yield* adapter.respondToUserInput(
+-        threadId,
+-        ApprovalRequestId.make(String(requested.requestId)),
+-        { color: "blue" },
+-      );
+-
+-      assert.deepStrictEqual(yield* Fiber.join(answerFiber), { color: "blue" });
++  it.effect("bridges MCP ask_question asynchronously through T3 native user input", () =>
++    Effect.gen(function* () {
++      const adapter = yield* CursorAdapter;
++      const settings = yield* ServerSettingsService;
++      const threadId = ThreadId.make("cursor-mcp-user-input-bridge");
++
++      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
++      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
++
++      yield* adapter.startSession({
++        threadId,
++        provider: ProviderDriverKind.make("cursor"),
++        cwd: process.cwd(),
++        runtimeMode: "full-access",
++        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
++      });
++
++      const requestedFiber = yield* adapter.streamEvents.pipe(
++        Stream.filter(
++          (event) => event.threadId === threadId && event.type === "user-input.requested",
++        ),
++        Stream.take(1),
++        Stream.runCollect,
++        Effect.forkChild,
++      );
++
++      // Give the stream consumer a scheduler turn before publishing the request.
++      yield* Effect.yieldNow;
++
++      const handler = McpUserInputBridge.read(threadId);
++      assert.isDefined(handler);
++      if (!handler) {
++        return;
++      }
++
++      const request = yield* handler.ask([
++        {
++          id: "color",
++          header: "Color",
++          question: "Which color do you prefer?",
++          options: [
++            { label: "Blue", description: "Blue", value: "blue" },
++            { label: "Green", description: "Green", value: "green" },
++            { label: "Red", description: "Red", value: "red" },
++          ],
++          allowCustomAnswer: false,
++          multiSelect: false,
++        },
++      ]);
++
++      const requestedEvents = Array.from(yield* Fiber.join(requestedFiber));
++      const requested = requestedEvents[0];
++
++      assert.isDefined(requested);
++      if (!requested || requested.type !== "user-input.requested") {
++        return;
++      }
++
++      assert.equal(request.requestId, String(requested.requestId));
++      assert.equal(requested.payload.questions[0]?.question, "Which color do you prefer?");
++      assert.deepStrictEqual(
++        requested.payload.questions[0]?.options.map((option) => option.value),
++        ["blue", "green", "red"],
++      );
++
++      assert.deepStrictEqual(yield* handler.wait(request.requestId, 10), {
++        requestId: request.requestId,
++        status: "pending",
++      });
++
++      yield* adapter.respondToUserInput(
++        threadId,
++        ApprovalRequestId.make(String(requested.requestId)),
++        { color: "blue" },
++      );
++
++      assert.deepStrictEqual(yield* handler.wait(request.requestId, 1_000), {
++        requestId: request.requestId,
++        status: "answered",
++        answers: { color: "blue" },
++      });
+ 
+       yield* adapter.stopSession(threadId);
+       assert.isUndefined(McpUserInputBridge.read(threadId));
 diff --git a/apps/server/src/provider/Layers/CursorAdapter.ts b/apps/server/src/provider/Layers/CursorAdapter.ts
-index 0dc3c8d26..94141d7c7 100644
 --- a/apps/server/src/provider/Layers/CursorAdapter.ts
 +++ b/apps/server/src/provider/Layers/CursorAdapter.ts
-@@ -938,39 +938,60 @@ export function makeCursorAdapter(
+@@ -939,40 +939,64 @@
            ctx.notificationFiber = nf;
            sessions.set(input.threadId, ctx);
  
@@ -249,89 +473,10 @@ index 0dc3c8d26..94141d7c7 100644
  
            sessionScopeTransferred = true;
  
-diff --git a/apps/server/src/provider/Layers/CursorAdapter.test.ts b/apps/server/src/provider/Layers/CursorAdapter.test.ts
-index f883d7fb2..8f7b83f1d 100644
---- a/apps/server/src/provider/Layers/CursorAdapter.test.ts
-+++ b/apps/server/src/provider/Layers/CursorAdapter.test.ts
-@@ -302,7 +302,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
-     }),
-   );
- 
--  it.effect("bridges MCP ask_question through T3 native user input", () =>
-+  it.effect("bridges MCP ask_question asynchronously through T3 native user input", () =>
-     Effect.gen(function* () {
-       const adapter = yield* CursorAdapter;
-       const settings = yield* ServerSettingsService;
-@@ -332,7 +332,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
-         return;
-       }
- 
--      const answerFiber = yield* handler([
-+      const request = yield* handler.ask([
-         {
-           id: "color",
-           header: "Color",
-@@ -346,7 +346,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
-           multiSelect: false,
-         },
--      ]).pipe(Effect.forkChild);
-+      ]);
- 
-       const requestedEvents = Array.from(yield* Fiber.join(requestedFiber));
-       const requested = requestedEvents[0];
-@@ -356,6 +356,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
-         return;
-       }
- 
-+      assert.equal(request.requestId, String(requested.requestId));
-       assert.equal(requested.payload.questions[0]?.question, "Which color do you prefer?");
-       assert.deepStrictEqual(
-         requested.payload.questions[0]?.options.map((option) => option.value),
-@@ -363,6 +364,11 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
-         ["blue", "green", "red"],
-       );
- 
-+      assert.deepStrictEqual(yield* handler.wait(request.requestId, 10), {
-+        requestId: request.requestId,
-+        status: "pending",
-+      });
-+
-       yield* adapter.respondToUserInput(
-         threadId,
-         ApprovalRequestId.make(String(requested.requestId)),
-@@ -370,7 +376,11 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
-         { color: "blue" },
-       );
- 
--      assert.deepStrictEqual(yield* Fiber.join(answerFiber), { color: "blue" });
-+      assert.deepStrictEqual(yield* handler.wait(request.requestId, 1_000), {
-+        requestId: request.requestId,
-+        status: "answered",
-+        answers: { color: "blue" },
-+      });
- 
-       yield* adapter.stopSession(threadId);
-       assert.isUndefined(McpUserInputBridge.read(threadId));
-diff --git a/apps/server/src/provider/RuntimeInstructions.ts b/apps/server/src/provider/RuntimeInstructions.ts
-index 953e155ea..d23868acf 100644
---- a/apps/server/src/provider/RuntimeInstructions.ts
-+++ b/apps/server/src/provider/RuntimeInstructions.ts
-@@ -3,7 +3,7 @@ When the t3-code MCP server exposes link_pull_request, you must use it to register every pull request you create or work on for this thread. Call link_pull_request with the full PR URL immediately after creating a PR or starting work on an existing PR. For a stack, call it for every layer, not just the current branch or the top PR. This applies when creating or updating PRs through gh, gh stack, another CLI, or the host API: those operations do not register the PRs with this thread. Linking an already-linked PR is safe. Before finishing PR work, call list_thread_pull_requests and link any PR from your work that is missing. Do not link unrelated PRs mentioned only as background. If a linking call fails, report that failure instead of claiming the PR is linked.
- </pull_request_linking>\`;
- 
--const CURSOR_USER_INPUT_INSTRUCTIONS = \`<cursor_user_input>
--When running through the Cursor harness, the native Cursor AskQuestion tool may be unavailable over ACP. When the t3-code MCP server exposes ask_question, use that tool whenever you need to ask the user a question, request clarification, or present choices. Prefer ask_question over writing the question as ordinary assistant text, and wait for the tool result before continuing.
--</cursor_user_input>\`;
-+const CURSOR_USER_INPUT_INSTRUCTIONS = \`<cursor_user_input>
-+When running through the Cursor harness, the native Cursor AskQuestion tool may be unavailable over ACP. When the t3-code MCP server exposes ask_question, use that tool whenever you need to ask the user a question, request clarification, or present choices. The fallback is asynchronous: call ask_question once, keep its requestId, then call wait_for_answer with that same requestId. If wait_for_answer returns status=pending, call it again; do not ask the same question again and do not continue the task until status=answered. Each wait is intentionally bounded below the Cursor MCP request timeout. Prefer this flow over writing the question as ordinary assistant text.
-+</cursor_user_input>\`;
- 
- /** Shared runtime context; omit model and effort when the harness manages them dynamically. */
 diff --git a/apps/server/src/provider/RuntimeInstructions.test.ts b/apps/server/src/provider/RuntimeInstructions.test.ts
-index 2ac9d8a1c..66a879918 100644
 --- a/apps/server/src/provider/RuntimeInstructions.test.ts
 +++ b/apps/server/src/provider/RuntimeInstructions.test.ts
-@@ -26,9 +26,9 @@ describe("buildRuntimeInstructions", () => {
+@@ -26,9 +26,9 @@
  
      expect(cursor).toContain("native Cursor AskQuestion tool may be unavailable over ACP");
      expect(cursor).toContain("t3-code MCP server exposes ask_question");
@@ -343,3 +488,16 @@ index 2ac9d8a1c..66a879918 100644
 +    expect(cursor).toContain("If wait_for_answer returns status=pending, call it again");
      expect(codex).not.toContain("native Cursor AskQuestion tool may be unavailable over ACP");
    });
+ 
+diff --git a/apps/server/src/provider/RuntimeInstructions.ts b/apps/server/src/provider/RuntimeInstructions.ts
+--- a/apps/server/src/provider/RuntimeInstructions.ts
++++ b/apps/server/src/provider/RuntimeInstructions.ts
+@@ -3,7 +3,7 @@
+ </pull_request_linking>`;
+ 
+ const CURSOR_USER_INPUT_INSTRUCTIONS = `<cursor_user_input>
+-When running through the Cursor harness, the native Cursor AskQuestion tool may be unavailable over ACP. When the t3-code MCP server exposes ask_question, use that tool whenever you need to ask the user a question, request clarification, or present choices. Prefer ask_question over writing the question as ordinary assistant text, and wait for the tool result before continuing.
++When running through the Cursor harness, the native Cursor AskQuestion tool may be unavailable over ACP. When the t3-code MCP server exposes ask_question, use that tool whenever you need to ask the user a question, request clarification, or present choices. The fallback is asynchronous: call ask_question once, keep its requestId, then call wait_for_answer with that same requestId. If wait_for_answer returns status=pending, call it again; do not ask the same question again and do not continue the task until status=answered. Each wait is intentionally bounded below the Cursor MCP request timeout. Prefer this flow over writing the question as ordinary assistant text.
+ </cursor_user_input>`;
+ 
+ /** Shared runtime context; omit model and effort when the harness manages them dynamically. */
