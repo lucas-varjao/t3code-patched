@@ -212,7 +212,7 @@ diff --git a/apps/server/src/mcp/toolkits/userInput/tools.ts b/apps/server/src/m
 diff --git a/apps/server/src/provider/Layers/CursorAdapter.test.ts b/apps/server/src/provider/Layers/CursorAdapter.test.ts
 --- a/apps/server/src/provider/Layers/CursorAdapter.test.ts
 +++ b/apps/server/src/provider/Layers/CursorAdapter.test.ts
-@@ -303,77 +303,87 @@
+@@ -303,77 +303,93 @@
      }),
    );
  
@@ -352,7 +352,13 @@ diff --git a/apps/server/src/provider/Layers/CursorAdapter.test.ts b/apps/server
 +        ["blue", "green", "red"],
 +      );
 +
-+      assert.deepStrictEqual(yield* handler.wait(request.requestId, 10), {
++      const pendingWaitFiber = yield* handler
++        .wait(request.requestId, 10)
++        .pipe(Effect.forkChild);
++      yield* Effect.yieldNow;
++      yield* TestClock.adjust(10);
++
++      assert.deepStrictEqual(yield* Fiber.join(pendingWaitFiber), {
 +        requestId: request.requestId,
 +        status: "pending",
 +      });
