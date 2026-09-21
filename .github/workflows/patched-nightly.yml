@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PATCH_REVISION: "1"
+  PATCH_REVISION: "2"
 
 jobs:
   build-and-release:
@@ -228,7 +228,7 @@ jobs:
           Patch revision: \`${PATCH_REVISION}\`
 
           Local patch:
-          - Cursor ACP AskQuestion fallback through the T3 Code MCP user-input bridge.
+          - Cursor ACP AskQuestion fallback through an asynchronous T3 Code MCP user-input bridge (`ask_question` + `wait_for_answer`).
 
           The embedded T3 version remains identical to the official upstream
           version so desktop/server version synchronization continues to use

@@ -3,12 +3,19 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PATCH="$ROOT/patches/cursor-ask-question.patch"
+ASYNC_PATCH="$ROOT/patches/cursor-ask-question-async.patch"
+PATCH_REVISION="${PATCH_REVISION:-2}"
 WORK_ROOT="$ROOT/.work"
 SOURCE="$WORK_ROOT/t3code"
 UPSTREAM="https://github.com/pingdotgg/t3code.git"
 
 if [[ ! -f "$PATCH" ]]; then
   echo "Patch não encontrado: $PATCH" >&2
+  exit 1
+fi
+
+if [[ ! -f "$ASYNC_PATCH" ]]; then
+  echo "Patch não encontrado: $ASYNC_PATCH" >&2
   exit 1
 fi
 
@@ -48,8 +55,14 @@ git -C "$SOURCE" checkout --detach "$TAG" >/dev/null
 echo "Validando patch..."
 git -C "$SOURCE" apply --check "$PATCH"
 
-echo "Aplicando patch..."
+echo "Aplicando patch base..."
 git -C "$SOURCE" apply "$PATCH"
+
+echo "Validando patch assíncrono..."
+git -C "$SOURCE" apply --check "$ASYNC_PATCH"
+
+echo "Aplicando patch assíncrono..."
+git -C "$SOURCE" apply "$ASYNC_PATCH"
 
 UPSTREAM_SHA="$(git -C "$SOURCE" rev-parse HEAD)"
 VERSION="${TAG#v}"
@@ -59,7 +72,7 @@ cat > "$WORK_ROOT/manifest.json" <<EOF2
   "upstreamVersion": "$VERSION",
   "upstreamTag": "$TAG",
   "upstreamCommit": "$UPSTREAM_SHA",
-  "patchRevision": 1
+  "patchRevision": $PATCH_REVISION
 }
 EOF2
 
