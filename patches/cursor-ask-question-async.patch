@@ -482,7 +482,7 @@ diff --git a/apps/server/src/provider/Layers/CursorAdapter.ts b/apps/server/src/
 diff --git a/apps/server/src/provider/RuntimeInstructions.test.ts b/apps/server/src/provider/RuntimeInstructions.test.ts
 --- a/apps/server/src/provider/RuntimeInstructions.test.ts
 +++ b/apps/server/src/provider/RuntimeInstructions.test.ts
-@@ -26,9 +26,9 @@
+@@ -35,9 +35,9 @@
  
      expect(cursor).toContain("native Cursor AskQuestion tool may be unavailable over ACP");
      expect(cursor).toContain("t3-code MCP server exposes ask_question");
@@ -506,4 +506,4 @@ diff --git a/apps/server/src/provider/RuntimeInstructions.ts b/apps/server/src/p
 +When running through the Cursor harness, the native Cursor AskQuestion tool may be unavailable over ACP. When the t3-code MCP server exposes ask_question, use that tool whenever you need to ask the user a question, request clarification, or present choices. The fallback is asynchronous: call ask_question once, keep its requestId, then call wait_for_answer with that same requestId. If wait_for_answer returns status=pending, call it again; do not ask the same question again and do not continue the task until status=answered. Each wait is intentionally bounded below the Cursor MCP request timeout. Prefer this flow over writing the question as ordinary assistant text.
  </cursor_user_input>`;
  
- /** Shared runtime context; omit model and effort when the harness manages them dynamically. */
+ /**
